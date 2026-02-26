@@ -1,6 +1,4 @@
 ####### requirements.txt #######
 
 rdflib
-
-#reasoning
-owlrl
+-e .
