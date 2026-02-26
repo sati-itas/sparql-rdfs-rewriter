@@ -1,0 +1,3 @@
+from sparql_rdfs_rewriter.rewriter import RDFSRewriter
+from sparql_rdfs_rewriter.parser import SPARQLParser
+
