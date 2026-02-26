@@ -15,6 +15,7 @@ query_str = """PREFIX ex: <http://example.org/>
 rewriter = RDFSRewriter(tbox)
 rewritten_queries = rewriter.rewrite_query_str(query_str)
 parser = SPARQLParser()
+# algebra translate to SPARQL-String
 rewritten_query_string = parser.get_sparql_string(rewritten_queries)
 
 print("Original query:")

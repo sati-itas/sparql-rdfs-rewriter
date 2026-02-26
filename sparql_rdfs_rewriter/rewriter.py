@@ -30,9 +30,6 @@ class RDFSRewriter:
         union_set = self.build_union_ast(rewritten)
         q = self.inject_union(q, union_set)
 
-        # algebra translate to SPARQL-String
-        rewritten_query = self.parser.get_sparql_string(q)
-
         return q
 
     def rewrite_query(self, query: Query) -> str:
