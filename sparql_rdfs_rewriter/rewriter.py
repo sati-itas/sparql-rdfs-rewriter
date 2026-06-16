@@ -1,5 +1,6 @@
 from rdflib.namespace import RDF
 from rdflib.namespace import RDFS
+from rdflib.term import Variable
 
 from rdflib.plugins.sparql import algebra
 from rdflib.plugins.sparql.algebra import BGP
@@ -18,7 +19,14 @@ class RDFSRewriter:
     def __init__(self, schema_graph):
         self.idx = self.build_rdfs_index(schema_graph)
 
+        self._fresh_counter = 0
+
         self.parser = SPARQLParser()
+
+    def _fresh_var(self):
+        """Fresh existential variable for domain/range reformulation."""
+        self._fresh_counter += 1
+        return Variable(f'__rw{self._fresh_counter}')
 
     def rewrite_query_str(self, query: str) -> Query:
         """Rewrites the given SPARQL query based on implicit schema graph and returns the rewritten Query object."""
@@ -48,21 +56,54 @@ class RDFSRewriter:
         return q
 
     def build_rdfs_index(self, schema_graph):
-        idx = {'subClass': {}, 'subProperty': {}, 'domain': {}, 'range': {}}
+        idx = {
+            'subClass': {},     # class -> transitive subclasses
+            'subProperty': {},  # prop  -> transitive subproperties
+            'domain': {},       # prop  -> domain class
+            'range': {},        # prop  -> range class
+            'domainOf': {},     # class -> props with that exact domain
+            'rangeOf': {},      # class -> props with that exact range
+        }
 
+        # direct parent -> children edges
+        sub_class_direct = {}
         for s, _, o in schema_graph.triples((None, RDFS.subClassOf, None)):
-            idx['subClass'].setdefault(o, set()).add(s)
+            sub_class_direct.setdefault(o, set()).add(s)
 
+        sub_prop_direct = {}
         for s, _, o in schema_graph.triples((None, RDFS.subPropertyOf, None)):
-            idx['subProperty'].setdefault(o, set()).add(s)
+            sub_prop_direct.setdefault(o, set()).add(s)
+
+        # transitive closure so e.g. Manager (sub Employee sub Person) is found
+        # when expanding Person
+        idx['subClass'] = self._transitive_closure(sub_class_direct)
+        idx['subProperty'] = self._transitive_closure(sub_prop_direct)
 
         for s, _, o in schema_graph.triples((None, RDFS.domain, None)):
             idx['domain'][s] = o
+            idx['domainOf'].setdefault(o, set()).add(s)
 
         for s, _, o in schema_graph.triples((None, RDFS.range, None)):
             idx['range'][s] = o
+            idx['rangeOf'].setdefault(o, set()).add(s)
 
         return idx
+
+    def _transitive_closure(self, direct):
+        """direct: node -> set(direct descendants). Returns node -> set(all
+        transitive descendants)."""
+        closure = {}
+        for node in direct:
+            seen = set()
+            stack = list(direct[node])
+            while stack:
+                d = stack.pop()
+                if d in seen:
+                    continue
+                seen.add(d)
+                stack.extend(direct.get(d, ()))
+            closure[node] = seen
+        return closure
 
     def rewrite_bgp(self, patterns, idx):
         """Basic Graph Pattern rewriting"""
@@ -78,24 +119,32 @@ class RDFSRewriter:
         alts = set()
 
         # CASE 1: rdf:type C
+        # A (s rdf:type C) answer is entailed by:
+        #   - (s rdf:type C') for any subclass C' of C
+        #   - (s p _) for any property p whose domain is C (or a subclass of C)
+        #   - (_ p s) for any property p whose range  is C (or a subclass of C)
         if p == RDF.type:
             classes = idx['subClass'].get(o, set()) | {o}
             for c in classes:
                 alts.add((s, RDF.type, c))
 
+                # DOMAIN: property edge from s implies s is of the domain class
+                for pr in idx['domainOf'].get(c, ()):
+                    alts.add((s, pr, self._fresh_var()))
+
+                # RANGE: property edge into s implies s is of the range class
+                for pr in idx['rangeOf'].get(c, ()):
+                    alts.add((self._fresh_var(), pr, s))
+
         # CASE 2: Property
+        # A (s p o) answer is entailed only by (s p' o) for subproperties p' of
+        # p. Domain/range do NOT generate new p-edges, so expanding them here is
+        # unsound (broadens the pattern, drops the o-constraint) -> handled in
+        # CASE 1 instead.
         else:
             props = idx['subProperty'].get(p, set()) | {p}
             for pr in props:
                 alts.add((s, pr, o))
-
-                # DOMAIN
-                if pr in idx['domain']:
-                    alts.add((s, RDF.type, idx['domain'][pr]))
-
-                # # RANGE
-                # if pr in idx["range"]:
-                #     alts.add((o, RDF.type, idx["range"][pr]))
 
         return alts
 
