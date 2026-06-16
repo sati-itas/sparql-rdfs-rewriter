@@ -140,14 +140,21 @@ class RDFSRewriter:
                 seen.add(canon)
                 bgps.append(BGP(list(combo)))
 
-        # All BGPs to a nested Union
+        # All BGPs to a *balanced* Union tree. A left-deep chain
+        # (Union(Union(Union(...)))) makes rdflib's evalUnion recurse once per
+        # node when evaluating, so a large cartesian product (e.g. many
+        # domain-expanded triples -> 2^n combinations) overflows Python's
+        # recursion limit. A balanced tree keeps eval depth at O(log n).
         if not bgps:
             return None
 
-        u = bgps[0]
-        for b in bgps[1:]:
-            u = Union(u, b)
-        return u
+        nodes = bgps
+        while len(nodes) > 1:
+            nodes = [
+                Union(nodes[i], nodes[i + 1]) if i + 1 < len(nodes) else nodes[i]
+                for i in range(0, len(nodes), 2)
+            ]
+        return nodes[0]
 
     def extract_bgp(self, q):
         """Extracts triples from the WHERE clause of a SPARQL query."""
