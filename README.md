@@ -19,6 +19,7 @@ Query → Parse → Rewrite → Execute
 * `rdfs:subClassOf` (transitive closure)
 * `rdfs:subPropertyOf` (transitive closure)
 * `rdfs:domain`
+* `rdfs:range`
 
 Rewriting operates on triple patterns and basic graph patterns according to schema entailments.
 
